@@ -5,22 +5,40 @@ This module provides functions to connect to a Trino database and perform variou
 import trino
 import streamlit as st
 import pandas as pd
+from typing import Optional
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+TRINO_HOST = os.getenv("TRINO_HOST", "localhost")
+TRINO_PORT = int(os.getenv("TRINO_PORT", 8088))
+TRINO_USER = os.getenv("TRINO_USER", "trino")
+TRINO_CATALOG = os.getenv("TRINO_CATALOG", "iceberg")
+TRINO_SCHEMA = os.getenv("TRINO_SCHEMA", "default")
+TRINO_HTTP_SCHEME = os.getenv("TRINO_HTTP_SCHEME", trino.constants.HTTP)
 
 
-def init_connection() -> trino.dbapi.Connection:
+def init_connection() -> Optional[trino.dbapi.Connection]:
     """Initializes a connection to Trino.
     Returns:
         trino.dbapi.Connection: A connection object to interact with Trino.
     """
 
-    return trino.dbapi.connect(
-        host="localhost",
-        port=8080,
-        user="trino",
-        catalog="iceberg",
-        schema="default",
-        http_scheme="http",
-    )
+    try:
+        conn: trino.dbapi.Connection = trino.dbapi.connect(
+            host=TRINO_HOST,
+            port=TRINO_PORT,
+            user=TRINO_USER,
+            catalog=TRINO_CATALOG,
+            schema=TRINO_SCHEMA,
+            http_scheme=TRINO_HTTP_SCHEME,
+            source="streamlit_iceberg_metadata_insights",
+        )
+        return conn
+    except Exception as e:
+        st.error(f"Failed to connect to Trino: {e}")
+        return None
 
 
 def fetch_stats(cursor: trino.dbapi.Cursor, schema: str, table: str) -> dict:
@@ -66,6 +84,49 @@ def load_file_details(cursor, schema, table):
         FROM {schema}."{table}$files" ORDER BY file_size_in_bytes DESC
     ''').fetchall(),
         columns=["Content", "Format", "Path", "Records", "Size"],
+    )
+
+
+def load_column_sizes(cursor, schema, table):
+    return pd.DataFrame(
+        cursor.execute(f"""
+        select 
+        cols.column_name,
+        cols.data_type,
+        sum(col_size_in_bytes) as col_size_in_bytes
+        from iceberg.gold."orders$files" as files
+        cross join unnest(column_sizes) as col_sizes(col_id, col_size_in_bytes)
+        left join iceberg.information_schema.columns as cols on col_sizes.col_id = cols.ordinal_position
+        where files.content = 0
+        and cols.table_catalog = 'iceberg'
+        and cols.table_schema = '{schema}'
+        and cols.table_name = '{table}'
+        group by 1, 2
+        order by 1
+    """).fetchall(),
+        columns=["Column Name", "Data Type", "Size (Bytes)"],
+    )
+
+
+def load_daily_growth(cursor, schema, table):
+    return pd.DataFrame(
+        cursor.execute(f"""
+        SELECT
+        s.committed_at as committed_at,
+        added_rows_count as added_rows_count,
+        added_data_files_count as added_data_files_count,
+        deleted_rows_count as deleted_rows_count,
+        deleted_data_files_count as deleted_data_files_count
+        from {schema}."{table}$manifests" m
+        left join {schema}."{table}$snapshots" s on s.snapshot_id=m.added_snapshot_id
+    """).fetchall(),
+        columns=[
+            "Committed At",
+            "Added Rows Count",
+            "Added Data Files Count",
+            "Deleted Rows Count",
+            "Deleted Data Files Count",
+        ],
     )
 
 

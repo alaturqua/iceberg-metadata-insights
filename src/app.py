@@ -16,7 +16,7 @@ from utils.connection import (
     load_snapshot_history,
     get_schemas,
     get_tables,
-    format_bytes,  # Import the helper
+    format_bytes,
 )
 
 # --- Page Configuration ---

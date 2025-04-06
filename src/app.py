@@ -8,11 +8,17 @@ from streamlit_extras.metric_cards import style_metric_cards
 from streamlit_extras.theme import st_theme
 from ydata_profiling import ProfileReport
 from streamlit_ydata_profiling import st_profile_report
+from ydata_profiling import ProfileReport
+from streamlit_ydata_profiling import st_profile_report
 
 from utils.connection import (
     init_connection,
     execute_alter_table,
+    execute_alter_table,
     fetch_stats,
+    load_column_sizes,
+    load_daily_growth,
+    load_file_details,
     load_column_sizes,
     load_daily_growth,
     load_file_details,
@@ -126,6 +132,8 @@ def main():
         else:
             style_metric_cards()
 
+        st.divider()
+        st.subheader("📈 Snapshots")
         st.divider()
         st.subheader("📈 Snapshots")
         snapshot_history = load_snapshot_history(cursor, schema, table)
@@ -347,6 +355,20 @@ def main():
                             deleted_rows_count   
                         FROM {schema}."{table}$manifests"
                         '''
+                        f'''
+                        SELECT
+                            path,
+                            length,
+                            partition_spec_id,
+                            added_snapshot_id,
+                            added_data_files_count,
+                            added_rows_count,
+                            existing_data_files_count,
+                            existing_rows_count,
+                            deleted_data_files_count,
+                            deleted_rows_count   
+                        FROM {schema}."{table}$manifests"
+                        '''
                     ).fetchall(),
                     columns=[
                         "Path",
@@ -355,9 +377,12 @@ def main():
                         "Added Snapshot ID",
                         "Added Data Files Count",
                         "Added Rows Count",
+                        "Added Rows Count",
                         "Existing Data Files Count",
                         "Existing Rows Count",
+                        "Existing Rows Count",
                         "Deleted Data Files Count",
+                        "Deleted Rows Count",
                         "Deleted Rows Count",
                     ],
                 )
@@ -368,6 +393,16 @@ def main():
             try:
                 all_manifests_df = pd.DataFrame(
                     cursor.execute(
+                        f'''
+                        SELECT 
+                            path,
+                            length,
+                            partition_spec_id,
+                            added_snapshot_id,
+                            added_data_files_count,
+                            existing_data_files_count,
+                            deleted_data_files_count
+                        FROM {schema}."{table}$all_manifests"'''
                         f'''
                         SELECT 
                             path,
@@ -435,6 +470,7 @@ def main():
                         f'SELECT * FROM {schema}."{table}$partitions"'
                     ).fetchall(),
                     columns=[
+                        "Partition",
                         "Partition",
                         "Record Count",
                         "File Count",

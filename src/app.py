@@ -1,22 +1,23 @@
-import streamlit as st
+import json
+import logging
+
 import pandas as pd
 import plotly.express as px
+import streamlit as st
 from streamlit_extras.metric_cards import style_metric_cards
 from streamlit_extras.theme import st_theme
-import logging
-import json
 
 from utils.connection import (
-    init_connection,
     execute_alter_table,
     fetch_stats,
+    format_bytes,
+    get_schemas,
+    get_tables,
+    init_connection,
     load_column_sizes,
     load_daily_growth,
     load_file_details,
     load_snapshot_history,
-    get_schemas,
-    get_tables,
-    format_bytes,
 )
 
 # --- Page Configuration ---
@@ -109,27 +110,70 @@ def main():
     # --- Sidebar for Selection and Actions ---
     with st.sidebar:
         st.header("📍 Select Table")
-        # Fetch schemas and tables using utility functions
-        schemas = get_schemas(cursor)
+
+        # Fetch schemas only once and cache them
+        @st.cache_data
+        def cached_get_schemas():
+            return get_schemas(cursor)
+
+        schemas = cached_get_schemas()
         if not schemas:
             st.warning("No schemas found or error fetching schemas.")
             st.stop()
-        selected_schema = st.selectbox("Schema", schemas)
 
-        tables = get_tables(cursor, selected_schema) if selected_schema else []
+        # Initialize session state for schema and table
+        if "selected_schema" not in st.session_state:
+            st.session_state.selected_schema = schemas[0] if schemas else None
+        if "selected_table" not in st.session_state:
+            st.session_state.selected_table = None
+
+        # Schema selection
+        selected_schema = st.selectbox(
+            "Schema",
+            schemas,
+            index=(
+                schemas.index(st.session_state.selected_schema)
+                if st.session_state.selected_schema in schemas
+                else 0
+            ),
+            key="schema_select",
+        )
+
+        # Update session state if schema changes
+        if selected_schema != st.session_state.selected_schema:
+            st.session_state.selected_schema = selected_schema
+            st.session_state.selected_table = (
+                None  # Reset table selection when schema changes
+            )
+
+        # Fetch tables based on selected schema
+        @st.cache_data
+        def cached_get_tables(schema):
+            return get_tables(cursor, schema)
+
+        tables = cached_get_tables(st.session_state.selected_schema)
         if not tables:
             st.warning(
-                f"No tables found in schema '{selected_schema}' or error fetching tables."
+                f"No tables found in schema '{st.session_state.selected_schema}' or error fetching tables."
             )
-            # Don't stop, allow user to potentially select another schema
-            selected_table = None
+            st.session_state.selected_table = None
         else:
-            selected_table = st.selectbox("Table", tables)
+            selected_table = st.selectbox(
+                "Table",
+                tables,
+                index=(
+                    tables.index(st.session_state.selected_table)
+                    if st.session_state.selected_table in tables
+                    else 0
+                ),
+                key="table_select",
+            )
+            st.session_state.selected_table = selected_table
 
         st.divider()
 
         # --- Table Actions ---
-        if selected_table:  # Only show actions if a table is selected
+        if st.session_state.selected_table:
             st.header("⚙️ Table Actions")
             st.warning("Actions modify table state. Use with caution!")
 
@@ -141,13 +185,11 @@ def main():
             ):
                 with st.spinner("Executing ANALYZE..."):
                     try:
-                        analyze_query = (
-                            f'ANALYZE "{selected_schema}"."{selected_table}"'
-                        )
+                        analyze_query = f'ANALYZE "{st.session_state.selected_schema}"."{st.session_state.selected_table}"'
                         logger.info(f"Executing: {analyze_query}")
                         cursor.execute(analyze_query).fetchall()
                         st.success("ANALYZE command executed successfully.")
-                        st.cache_data.clear()  # Clear cache as stats might have changed
+                        st.cache_data.clear()
                     except Exception as e:
                         logger.error(f"Error executing ANALYZE: {e}", exc_info=True)
                         st.error(f"Error executing ANALYZE: {e}")
@@ -648,8 +690,8 @@ def main():
             ):
                 try:
                     # Import profiling libraries here to avoid loading them if not used
-                    from ydata_profiling import ProfileReport
                     from streamlit_ydata_profiling import st_profile_report
+                    from ydata_profiling import ProfileReport
 
                     query = f'SELECT * FROM "{selected_schema}"."{selected_table}" LIMIT {profile_limit}'
                     logger.info(f"Executing profiling query: {query}")

@@ -3,20 +3,21 @@ This module provides functions to connect to a Trino database and perform variou
 with caching added for performance improvements.
 """
 
-import math
-import trino
-import streamlit as st
-import pandas as pd
-from typing import Optional
-from dotenv import load_dotenv
-import os
 import logging
+import math
+import os
+from typing import Optional
+
+import pandas as pd
+import streamlit as st
+import trino
+from dotenv import load_dotenv
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+load_dotenv(override=True)
 
 # --- Connection Configuration ---
 TRINO_HOST = os.getenv("TRINO_HOST", "localhost")
@@ -46,7 +47,13 @@ def init_connection() -> Optional[trino.dbapi.Connection]:
             catalog=TRINO_CATALOG,  # Connect to the main catalog initially
             schema=TRINO_SCHEMA,  # Use a default schema initially
             http_scheme=TRINO_HTTP_SCHEME,
-            source="streamlit_iceberg_metadata_insights_v2",  # App identifier
+            auth=(
+                None
+                if os.getenv("TRINO_PASSWORD") is None
+                else trino.auth.BasicAuthentication(
+                    TRINO_USER, os.getenv("TRINO_PASSWORD", None)
+                )
+            ),
         )
         logger.info(f"Successfully connected to Trino at {TRINO_HOST}:{TRINO_PORT}")
         return conn
@@ -120,10 +127,10 @@ def load_snapshot_history(
     if not conn:
         return pd.DataFrame()
     cursor = conn.cursor()
-    query = f'''
+    query = f"""
         SELECT committed_at, snapshot_id, parent_id, operation, summary
         FROM "{TRINO_CATALOG}"."{schema}"."{table}$snapshots" ORDER BY committed_at DESC
-    '''
+    """
     logger.debug(f"Executing snapshot history query: {query}")
     try:
         df = pd.DataFrame(
@@ -155,10 +162,10 @@ def load_file_details(
     if not conn:
         return pd.DataFrame()
     cursor = conn.cursor()
-    query = f'''
+    query = f"""
         SELECT content, file_format, file_path, CAST(record_count AS BIGINT) as record_count, CAST(file_size_in_bytes AS BIGINT) as file_size_in_bytes
         FROM "{TRINO_CATALOG}"."{schema}"."{table}$files" ORDER BY file_size_in_bytes DESC
-    '''
+    """
     logger.debug(f"Executing file details query: {query}")
     try:
         df = pd.DataFrame(

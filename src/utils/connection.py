@@ -4,7 +4,6 @@ with caching added for performance improvements.
 """
 
 import logging
-import math
 import os
 from typing import Optional
 
@@ -21,14 +20,17 @@ load_dotenv(override=True)
 
 # --- Connection Configuration ---
 TRINO_HOST = os.getenv("TRINO_HOST", "localhost")
-TRINO_PORT = int(os.getenv("TRINO_PORT", 8088))
+TRINO_PORT = int(os.getenv("TRINO_PORT", trino.constants.DEFAULT_PORT))
 TRINO_USER = os.getenv("TRINO_USER", "trino")
-TRINO_CATALOG = os.getenv("TRINO_CATALOG", "iceberg")
+TRINO_CATALOG = os.getenv("TRINO_CATALOG", trino.constants.DEFAULT_CATALOG)
 TRINO_SCHEMA = os.getenv(
-    "TRINO_SCHEMA", "default"
+    "TRINO_SCHEMA", trino.constants.DEFAULT_SCHEMA
 )  # Default schema, might be overridden by app selection
-TRINO_HTTP_SCHEME = os.getenv("TRINO_HTTP_SCHEME", trino.constants.HTTP)
-
+TRINO_HTTP_SCHEME = (
+    trino.constants.HTTPS if os.getenv("TRINO_PORT") == "443" else trino.constants.HTTP
+)
+TRINO_AUTH = os.getenv("TRINO_AUTH", trino.constants.DEFAULT_AUTH)
+TRINO_PASSWORD = os.getenv("TRINO_PASSWORD", None)
 # --- Connection Management ---
 
 
@@ -48,10 +50,11 @@ def init_connection() -> Optional[trino.dbapi.Connection]:
             schema=TRINO_SCHEMA,  # Use a default schema initially
             http_scheme=TRINO_HTTP_SCHEME,
             auth=(
-                None
-                if os.getenv("TRINO_PASSWORD") is None
+                trino.constants.DEFAULT_AUTH
+                if TRINO_PASSWORD is None
                 else trino.auth.BasicAuthentication(
-                    TRINO_USER, os.getenv("TRINO_PASSWORD", None)
+                    TRINO_USER,
+                    TRINO_PASSWORD,
                 )
             ),
         )
@@ -365,16 +368,3 @@ def get_tables(cursor: trino.dbapi.Cursor, schema: str) -> list[str]:
         logger.error(f"Error fetching tables for schema {schema}: {e}", exc_info=True)
         st.error(f"Error fetching tables for schema {schema}: {e}")
         return []
-
-
-def format_bytes(size_bytes: Optional[float]) -> str:
-    """Converts bytes to a human-readable string (KB, MB, GB)."""
-    if size_bytes is None or not isinstance(size_bytes, (int, float)) or size_bytes < 0:
-        return "N/A"
-    if size_bytes == 0:
-        return "0 Bytes"
-    i = int(math.floor(math.log(size_bytes, 1024)))
-    p = math.pow(1024, i)
-    s = round(size_bytes / p, 2)
-    sizes = ["Bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"]
-    return f"{s} {sizes[i]}"

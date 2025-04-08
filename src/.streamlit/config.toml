@@ -1,0 +1,14 @@
+[server]
+headless = true
+port = 8501
+enableCORS = false
+enableXsrfProtection = false
+gatherUsageStats = false
+maxUploadSize = 1024
+
+[theme]
+base = "dark"
+
+[logger]
+level = "error"
+messageFormat = "%(blue)%(asctime)s %(levelname)s %(message)s"

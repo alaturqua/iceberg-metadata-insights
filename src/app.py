@@ -6,9 +6,6 @@ import streamlit as st
 from streamlit_extras.metric_cards import style_metric_cards
 from streamlit_extras.theme import st_theme
 
-from utils.helper import safe_float, display_dataframe, format_bytes
-
-
 from utils.connection import (
     execute_alter_table,
     fetch_stats,
@@ -20,6 +17,7 @@ from utils.connection import (
     load_file_details,
     load_snapshot_history,
 )
+from utils.helper import display_dataframe, format_bytes, safe_float
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -63,11 +61,13 @@ def main():
             st.warning("No schemas found or error fetching schemas.")
             st.stop()
 
-        # Initialize session state for schema and table
+        # Initialize session state for schema, table and query execution flag
         if "selected_schema" not in st.session_state:
             st.session_state.selected_schema = schemas[0] if schemas else None
         if "selected_table" not in st.session_state:
             st.session_state.selected_table = None
+        if "execute_queries" not in st.session_state:
+            st.session_state.execute_queries = False
 
         # Schema selection
         selected_schema = st.selectbox(
@@ -87,6 +87,7 @@ def main():
             st.session_state.selected_table = (
                 None  # Reset table selection when schema changes
             )
+            st.session_state.execute_queries = False  # Reset query execution flag
 
         # Fetch tables based on selected schema
         @st.cache_data
@@ -99,7 +100,12 @@ def main():
                 f"No tables found in schema '{st.session_state.selected_schema}' or error fetching tables."
             )
             st.session_state.selected_table = None
+            st.session_state.execute_queries = False
         else:
+            # Define a callback for table selection
+            def on_table_select():
+                st.session_state.execute_queries = True
+
             selected_table = st.selectbox(
                 "Table",
                 tables,
@@ -109,13 +115,23 @@ def main():
                     else 0
                 ),
                 key="table_select",
+                on_change=on_table_select,
             )
+
             st.session_state.selected_table = selected_table
+
+            # Add an explicit analyze button if preferred
+            if not st.session_state.execute_queries and st.session_state.selected_table:
+                if st.button(
+                    "Load Table Details", type="primary", use_container_width=True
+                ):
+                    st.session_state.execute_queries = True
+                    st.rerun()
 
         st.divider()
 
         # --- Table Actions ---
-        if st.session_state.selected_table:
+        if st.session_state.selected_table and st.session_state.execute_queries:
             st.header("⚙️ Table Actions")
             st.warning("Actions modify table state. Use with caution!")
 
@@ -229,6 +245,13 @@ def main():
     # --- Main Content Area ---
     if selected_table and selected_schema:
         st.header(f"Inspecting: `{selected_schema}`.`{selected_table}`")
+
+        if not st.session_state.execute_queries:
+            st.info("Select a table and click 'Load Table Details' to view analytics.")
+            st.stop()  # Stop execution until user explicitly loads data
+
+        # From this point on, all your existing query-dependent code executes
+        # only when execute_queries is True
 
         # Fetch and display summary stats
         stats = fetch_stats(cursor, selected_schema, selected_table)
@@ -390,14 +413,60 @@ def main():
                 file_details_df["Size (MB)"] = safe_float(file_details_df["Size"]) / (
                     1024 * 1024
                 )
-                fig_size_dist = px.histogram(
-                    file_details_df.dropna(subset=["Size (MB)"]),
-                    x="Size (MB)",
-                    title="Data File Size Distribution",
-                    # nbins=50,  # Adjust number of bins as needed
-                    labels={"Size (MB)": "File Size (MB)"},
+
+                # Create size categories for better visualization
+                bins = [0, 1, 10, 50, 100, 500, float("inf")]
+                labels = [
+                    "<1MB",
+                    "1-10MB",
+                    "10-50MB",
+                    "50-100MB",
+                    "100-500MB",
+                    ">500MB",
+                ]
+                file_details_df["Size Category"] = pd.cut(
+                    file_details_df["Size (MB)"], bins=bins, labels=labels
+                )
+
+                # Count files by size category
+                size_counts = (
+                    file_details_df["Size Category"].value_counts().sort_index()
+                )
+
+                # Create bar chart
+                fig_size_dist = px.bar(
+                    x=size_counts.index,
+                    y=size_counts.values,
+                    title="File Size Distribution by Category",
+                    labels={"x": "File Size Category", "y": "Number of Files"},
                 )
                 st.plotly_chart(fig_size_dist, use_container_width=True)
+
+                # Show detailed stats
+                with st.expander("Show detailed statistics"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Total files", len(file_details_df))
+                        st.metric(
+                            "Average file size",
+                            f"{file_details_df['Size (MB)'].mean():.2f} MB",
+                        )
+                        st.metric(
+                            "Median file size",
+                            f"{file_details_df['Size (MB)'].median():.2f} MB",
+                        )
+                    with col2:
+                        st.metric(
+                            "Min file size",
+                            f"{file_details_df['Size (MB)'].min():.2f} MB",
+                        )
+                        st.metric(
+                            "Max file size",
+                            f"{file_details_df['Size (MB)'].max():.2f} MB",
+                        )
+                        st.metric(
+                            "Std dev", f"{file_details_df['Size (MB)'].std():.2f} MB"
+                        )
             else:
                 st.info("No file details available to plot distribution.")
 

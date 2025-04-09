@@ -346,7 +346,7 @@ def get_schemas(cursor: trino.dbapi.Cursor) -> list[str]:
     try:
         query = f"SELECT DISTINCT table_schema FROM {TRINO_CATALOG}.information_schema.tables WHERE table_type = 'BASE TABLE' AND table_schema NOT IN ('information_schema', 'system')"
         logger.debug(f"Executing get schemas query: {query}")
-        schemas = [s[0] for s in cursor.execute(query).fetchall()]
+        schemas = sorted([s[0] for s in cursor.execute(query).fetchall()])
         logger.info(f"Found schemas: {schemas}")
         return schemas
     except Exception as e:
@@ -361,7 +361,7 @@ def get_tables(cursor: trino.dbapi.Cursor, schema: str) -> list[str]:
         # Use LOWER() for case-insensitive comparison if needed, adjust quoting if schema/catalog names have special chars
         query = f"SELECT DISTINCT table_name FROM {TRINO_CATALOG}.information_schema.tables WHERE table_type = 'BASE TABLE' AND table_schema = '{schema}'"
         logger.debug(f"Executing get tables query for schema {schema}: {query}")
-        tables = [t[0] for t in cursor.execute(query).fetchall()]
+        tables = sorted([t[0] for t in cursor.execute(query).fetchall()])
         logger.info(f"Found tables in schema {schema}: {tables}")
         return tables
     except Exception as e:
